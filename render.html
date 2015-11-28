@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+        
+    <title>A Toy Black Hole</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <style>
+        body {
+            font-family: Monospace;
+            background-color: #fff;
+            margin: 0px;
+            overflow: hidden;
+        }
+    </style>
+    <script src="js/three.min.js"></script>
+    <script src="js/Detector.js"></script>
+    <script src="js/libs/stats.min.js"></script>
+    <script src="js/CurveExtras.js"></script>
+    <script src="js/renderers/Projector.js"></script>
+    <script src="js/renderers/CanvasRenderer.js"></script>
+    <script src="js/ParametricGeometries.js"></script>
+    <script src="js/libs/dat.gui.min.js"></script>
+    <script src="js/controls/OrbitControls.js"></script>
+<!--     // <script src="js/postprocessing/ShaderPass.js"></script>
+    // <script src="js/shaders/CopyShader.js"></script>
+    // <script src="js/shaders/FresnelShader.js"></script>
+    // <script src="js/postprocessing/BloomPass.js"></script>
+    // <script src="js/shaders/ConvolutionShader.js"></script>
+    // <script src="js/postprocessing/EffectComposer.js"></script>
+    // <script src="js/postprocessing/MaskPass.js"></script>
+    // <script src="js/postprocessing/RenderPass.js"></script>
+    // <script src="js/postprocessing/SavePass.js"></script>
+    // <script src="js/postprocessing/TexturePass.js"></script>
+    // <script type="text/javascript" src="js/tween.js"></script>
+    // <script type="text/javascript" src="js/controls/FlyControls.js"></script> -->
+    <script type="text/javascript" src="Basics.js"></script>
+    <script type="text/javascript" src="Manipulation.js"></script>
+ </head> 
+ <body>
+<script type="x-shader/x-vertex" id="vertexshader">
+    attribute float size;
+    attribute vec3 customColor;
+    varying vec3 vColor;
+
+    void main() {
+        vColor = customColor;
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = size * (300.0 / length( mvPosition.xyz));
+        gl_Position = projectionMatrix * mvPosition;
+    }
+</script>
+
+<script type="x-shader/x-fragment" id="fragmentshader">
+    uniform vec3 color;
+    uniform sampler2D texture;
+    varying vec3 vColor;
+
+    void main() {
+        gl_FragColor = vec4(color * vColor, 1.0);
+        gl_FragColor = gl_FragColor * texture2D(texture, gl_PointCoord);
+    }
+</script>
+<script type="x-shader/x-vertex" id="vertexshader2">
+    uniform float time;
+    varying vec2 vUv;
+
+    void main() {
+        vUv = uv;
+        vec4 mvPosition = modelViewMatrix * vec4(position + normal * vec3(sin(time * 0.2) * 0.5), 1.0);
+        gl_Position = projectionMatrix * mvPosition;
+    }
+</script>
+<script type="x-shader/x-fragment" id="fragmentshader2">
+        uniform float time; //changing with t
+        varying vec2 vUv;
+
+        void main() {
+            vec2 position = -1.0 + 2.0 * vUv; //
+            float red = abs(sin(position.x * position.y + time / 5.0));
+            float green = abs(sin(position.x * position.y + time / 4.0));
+            float blue = abs(sin(position.x * position.y + time / 3.0 ));
+            gl_FragColor = vec4(red, green, blue, 1.0);
+        }
+</script>
+
+<script type="text/javascript">
+    var stats, clock, orbitControls, camera, scene, renderer, cubeCamera, cubeCamera2, tween;
+    var sphere, sphere2, spaceTimeWire, starDistortedNet, geometry, star, klein, particleSystem, particleGeo, particleUni, pGroup, rGroup, sphereT, kleinCT, kleinET, LightC, cubeUniforms, cubeGroup, cubeGroupR, rSize;
+    var particles = 100, tester = 0, t = 0;
+
+    var animation = new Object();
+    animation.v = false;
+    animation.r = false;
+    animation.cameraControl = 0;
+    animation.cameraLight = false
+    var trackerHelper = {x:0, y:0, z:0};
+
+    var texture = THREE.ImageUtils.loadTexture( 'img/u4.jpg', THREE.UVMapping, function () {
+        init();
+        animate();
+    } );
+
+    // init();
+    // animate();
+
+    function init() {
+
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        var info = document.createElement('div');
+        info.style.position = 'absolute';
+        info.style.top = '10px';
+        info.style.width = '100%';
+        info.style.textAlign = 'center';
+        info.innerHTML += '<input id="traversing" type="button" onclick="setCameraAnimation(animation, camera)" value="Animation: OFF"/>';
+        info.innerHTML += '<br/><input id="outsideOnly" type="button" onclick="outsideCircling(animation, camera)" value="Look Around: OFF"/>'
+        info.innerHTML += '<br/><input id="insideOnly" type="button" onclick="insideTraversing(animation, camera)" value="Head Inside: OFF"/>'
+        info.innerHTML += '<input id="insideOnly" type="button" onclick="animation.cameraLight = (animation.cameraLight === false);" value="Camera Light"/>'
+         container.appendChild(info);
+
+        stats = initStats();
+        container.appendChild(stats.domElement);
+        // create a scene, that will hold all our elements such as objects, cameras and lights.
+        scene = new THREE.Scene();
+        // create a camera, which defines where we're looking at.
+        camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 2, 5000);
+
+        var meshT = new THREE.Mesh( new THREE.SphereGeometry(700, 60, 40), new THREE.MeshBasicMaterial( {map: texture} ) );
+        meshT.scale.x = -1;
+        scene.add( meshT );
+
+        cubeCamera = new THREE.CubeCamera(1, 1000, 256);
+        cubeCamera.renderTarget.minFilter = THREE.LinearMipMapLinearFilter;
+        cubeCamera.position.set(365, 0, -85);
+        scene.add(cubeCamera);
+
+        cubeCamera2 = new THREE.CubeCamera(1, 1000, 256);
+        cubeCamera2.renderTarget.minFilter = THREE.LinearMipMapLinearFilter;
+        cubeCamera2.position.set(365, 0, -90);
+        cubeCamera2.renderTarget.mapping = THREE.CubeRefractionMapping;
+        scene.add(cubeCamera2);
+
+        //reflective objects
+        var material = new THREE.MeshBasicMaterial({color:0xFFFFCC, envMap: cubeCamera.renderTarget});
+        sphereT = new THREE.Mesh(new THREE.SphereGeometry( 5, 20, 20 ), material );
+        scene.add(sphereT);
+        kleinET = new THREE.Mesh(new THREE.ParametricGeometry(THREE.ParametricGeometries.klein_figure8, 50, 50 ), material);
+        scene.add(kleinET);
+        kleinCT = new THREE.Mesh(new THREE.ParametricGeometry(THREE.ParametricGeometries.klein_complex, 50, 50 ), material);
+        scene.add(kleinCT);
+
+        rGroup = [];
+        rSize = [];
+        //refractive objects
+        var materialR = new THREE.MeshPhongMaterial({color: 0xCC99CC, envMap: cubeCamera2.renderTarget, refractionRatio: 0.98, reflectivity: 0.9});
+
+        var refraObjNo = 6;
+        for (var i = 0; i < refraObjNo; i++){
+            var geometryR = new THREE.IcosahedronGeometry(2, 1);
+            var rObj = new THREE.Mesh(geometryR, materialR);
+            var scaleControl = Math.random() + 0.5;
+            rObj.scale.multiplyScalar(scaleControl);
+            rObj.position.x = Math.sin(2 * i) * 10 + 365;
+            rObj.position.y = Math.sin(2* i) * 10;
+            rObj.position.z = Math.sin(2 * i) * 10 - 90;
+            rObj.castShadow = true;
+            rObj.receiveShadow = true;
+            rGroup.push(rObj);
+            rSize.push(2*scaleControl);
+            scene.add(rObj);
+        }
+
+
+        // create a render and set the size
+        renderer =  new THREE.WebGLRenderer({antialias: true});
+        renderer.setClearColor( 0x000000 );
+        renderer.setPixelRatio( window.devicePixelRatio );
+        renderer.setSize( window.innerWidth, window.innerHeight);
+        renderer.shadowMapEnabled = true;
+        renderer.shadowMapSoft = true;
+        renderer.shadowMapType = THREE.PCFSoftShadowMap;
+        //renderer.shadowMapType = THREE.BasicShadowMap;
+        container.appendChild(renderer.domElement);
+
+        camera.position.set(0, -300,300);
+        camera.lookAt(scene.position);
+        //scene.add(camera);
+
+        //create planets
+        sphere = createEarthMesh(new THREE.SphereGeometry(15, 40, 40));
+        sphere.position.set(100, 0, 0);
+        sphere.castShadow = true;
+        sphere.receiveShadow = true;
+        scene.add(sphere);
+        sphere2 = createMarsMesh(new THREE.SphereGeometry(10, 40, 40));
+        sphere2.position.set(-30, -10, 0);
+        sphere2.castShadow = true;
+        sphere2.receiveShadow = true;
+        scene.add(sphere2);
+        //create lava textured star
+        star = createLavaMesh(new THREE.SphereGeometry(50, 50, 50));
+        star.position.set(-200,0,-10);
+        scene.add(star);
+
+        //GLOW EFFECT
+        var spriteMaterial = new THREE.SpriteMaterial({
+        map: new THREE.ImageUtils.loadTexture( 'img/glow3.png' ),
+            useScreenCoordinates: false, 
+            //alignment: THREE.SpriteAlignment.center,
+            color: 0xFF9933, 
+            transparent: false, 
+            blending: THREE.AdditiveBlending
+        });
+        var sprite = new THREE.Sprite(spriteMaterial);
+        sprite.scale.set(140, 140, 1.0);
+        star.add(sprite); // this centers the glow at the mesh
+
+        //create klein shape
+        var materials;
+        var map = THREE.ImageUtils.loadTexture( 'img/bh3.jpg' );
+        map.wrapS = map.wrapT = THREE.RepeatWrapping;
+        map.anisotropy = 16;
+        materials = [
+            new THREE.MeshLambertMaterial( { map: map, side: THREE.DoubleSide } ),
+            new THREE.MeshBasicMaterial( { color: 0x000000, wireframe: true, transparent: true, opacity: 1, side: THREE.DoubleSide } )
+        ];
+        // materials = new THREE.MeshLambertMaterial({
+        //     map: map,
+        //     side: THREE.DoubleSide,
+        //     wireframe: true
+        // });
+        var geo = new THREE.ParametricGeometry( THREE.ParametricGeometries.klein_bottle, 50, 50 );
+        klein = THREE.SceneUtils.createMultiMaterialObject( geo, materials );
+        //klein = THREE.Mesh(geo, materials);
+        klein.position.set(400, 0, -80);
+        klein.scale.multiplyScalar(10);
+        klein.receiveShadow = true;
+        scene.add( klein );
+
+        //create plane
+        geometry = new THREE.PlaneGeometry(1200,1200,150,150);
+        geometry.dynamic = true;
+        var spaceTimeWire = new THREE.Mesh(geometry, planeMaterial());
+        spaceTimeWire.position.z = 0;
+        spaceTimeWire.doubleSided = true;
+
+        starDistortedNet = [];
+        distortion(star.position, 60, spaceTimeWire, starDistortedNet,tester);
+        distortionBH(klein.position, 23, spaceTimeWire, starDistortedNet, tester);
+        tester++;
+        scene.add(spaceTimeWire);
+
+        orbitControls = new THREE.OrbitControls(camera,renderer.domElement);
+        orbitControls.autoRotate = false;
+        clock = new THREE.Clock();
+
+        //light
+        scene.add(new THREE.AmbientLight(0x003366));
+
+        var Light = new THREE.PointLight(0xFFFF99, 3, 700);
+        Light.position.set(-200,0,-10);
+        Light.castShadow = true;
+        Light.shadowCameraVisible = true;
+        Light.shadowDarkness = 0.5;
+        Light.shadowCameraNear = 1;
+        Light.shadowCameraFar = 500;
+        Light.shadowMapWidth = 2048;
+        Light.shadowMapHeight = 1024;
+        Light.shadowBias = 0.01;
+        scene.add(Light);
+
+        LightC = new THREE.PointLight(0xCCFF66);
+        LightC.intensity = 0;
+        LightC.castShadow = true;
+        LightC.shadowDarkness = 0.5;
+        LightC.shadowCameraNear = 1;
+        LightC.shadowCameraFar = 50;
+        LightC.shadowMapWidth = 2048;
+        LightC.shadowMapHeight = 1024;
+        LightC.shadowBias = 0.01;
+        scene.add(LightC);
+
+        //particle system
+        particleUni= {
+            color:     { type: "c", value: new THREE.Color( 0xffffff ) },
+            texture:   { type: "t", value: THREE.ImageUtils.loadTexture( "img/spikey.png" ) }
+        };
+        var shaderMaterial = new THREE.ShaderMaterial( {
+            uniforms:       particleUni,
+            vertexShader:   document.getElementById( 'vertexshader' ).textContent,
+            fragmentShader: document.getElementById( 'fragmentshader' ).textContent,
+            blending:       THREE.AdditiveBlending,
+            depthTest:      false,
+            transparent:    true
+        });
+
+        var radius = 8;
+        particleGeo = new THREE.BufferGeometry();
+        var positions = new Float32Array( particles * 3 );
+        var colors = new Float32Array( particles * 3 );
+        var sizes = new Float32Array( particles );
+        var color = new THREE.Color();
+
+        for ( var i = 0, i3 = 0; i < particles; i ++, i3 += 3 ) {
+            var alpha = Math.random() * Math.PI * 2; //0~2pi
+            var Beta = Math.random() * Math.PI - Math.PI/2; //-pi/2~pi/2
+            positions[i3 + 0] = radius * Math.sin(alpha) * Math.cos(Beta) + 410;
+            positions[i3 + 1] = radius * Math.cos(alpha) * Math.cos(Beta);
+            positions[i3 + 2] = radius * Math.sin(Beta) - 20;
+
+            color.setHSL( i / particles, 1.0, 0.5 );
+
+            colors[i3 + 0] = color.r;
+            colors[i3 + 1] = color.g;
+            colors[i3 + 2] = color.b;
+
+            sizes[ i ] = 10;
+        }
+        particleGeo.addAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+        particleGeo.addAttribute( 'customColor', new THREE.BufferAttribute( colors, 3 ) );
+        particleGeo.addAttribute( 'size', new THREE.BufferAttribute( sizes, 1 ) );
+
+        particleSystem = new THREE.Points( particleGeo, shaderMaterial );
+        scene.add( particleSystem );
+
+        cubeUniforms = {
+            time: {type:"f", value: 0},
+            resolution: {type:"v2", value: new THREE.Vector2},
+            texture: {type:"t", value: THREE.ImageUtils.loadTexture("img/spark.png")}
+        };
+        var cubeMaterial = new THREE.ShaderMaterial({
+            uniforms: cubeUniforms,
+            vertexShader:   document.getElementById( 'vertexshader2' ).textContent,
+            fragmentShader: document.getElementById( 'fragmentshader2' ).textContent,
+            side: THREE.DoubleSide
+        });
+
+        var cubePos = [];
+        cubeGroupR = 2;
+        for (var t = 0; t < 2 * Math.PI; t += Math.PI/6){
+            // var x = 0.3 * Math.exp(0.15 * t) * Math.cos(2 * t);
+            // var y = 0.3 * Math.exp(0.15 * t) * Math.sin(2 * t);
+            // var z = 0.3 * Math.exp(0.15 * t);
+            var rTheta = 80/180*Math.PI;
+            var tempx = cubeGroupR * Math.cos(t);
+            var tempy = cubeGroupR * Math.sin(t);
+            var tempz = 0;
+            var x = Math.cos(rTheta) * tempx + Math.sin(rTheta) * tempz + 380;
+            var y = tempy;
+            var z = -Math.sin(rTheta) * tempx + Math.cos(rTheta) * tempz - 160;
+            cubePos.push(new THREE.Vector3(x, y, z));
+        }
+        // var tanh = Math.tanh || function tanh(x){
+        //     return (Math.exp(x) - Math.exp(-x)) / (Math.exp(x) + Math.exp(-x));
+        // }; 
+        // var cosh = Math.cosh || function cosh(x){
+        //     return (Math.exp(x) + Math.exp(-x)) / 2;
+        // }; 
+        // var sinh = Math.sinh || function sinh(x){
+        //     return (Math.exp(x) - Math.exp(-x)) / 2;
+        // };
+        // // sphere spiral
+        // var sz = 16, cxy = 100, cz = cxy * sz;
+        // var hxy = Math.PI / cxy, hz = Math.PI / cz;
+        // var r = 20;
+        // for (var i = -cz; i < cz; i += 100) {
+        //     var lxy = i * hxy;
+        //     var lz = i * hz;
+        //     var rxy = r /  cosh(lz);
+        //     var x = rxy * Math.cos(lxy);
+        //     var y = rxy * Math.sin(lxy);
+        //     var z = r * tanh(lz);
+        //     cubePos.push(new THREE.Vector3(x, y, z));
+        // }
+        cubeGroup = [];
+        var cubeR = 2;
+        for(var i = 0; i < cubePos.length; i++){
+            var cube = new THREE.Mesh(new THREE.CubeGeometry(cubeR, cubeR, cubeR), cubeMaterial);
+            cube.position.set(cubePos[i].x, cubePos[i].y, cubePos[i].z);
+            cubeGroup.push(cube);
+            scene.add(cube);
+        }        
+
+        //12-vertex star-shape filed
+        var innerR = 6;
+        var outerR = 9;
+        var verNum = 12;
+        var tstar = new THREE.Shape();
+        var innerTheta = 0;
+        var outerTheta = 15/180 * Math.PI;
+        tstar.moveTo(innerR, 0);
+        for(var drawt = 0; drawt < verNum; drawt++){
+            innerTheta += 30/180 * Math.PI;
+            tstar.lineTo(outerR * Math.cos(outerTheta), outerR * Math.sin(outerTheta));
+            tstar.lineTo(innerR * Math.cos(innerTheta), innerR * Math.sin(innerTheta));
+            outerTheta += 30/180 * Math.PI;
+        }
+        pGroup = [];
+        //equal distanced points
+        function addShape(shape, color, x, y, z, rx, ry, rz, s){
+            var spacedPoints = shape.createSpacedPointsGeometry( 30 );
+            var ptcs = new THREE.Points(spacedPoints, new THREE.PointsMaterial( { color: color, size: 0.3 }));
+            ptcs.position.set( x, y, z);
+            ptcs.rotation.set( rx, ry, rz );
+            ptcs.scale.set( s, s, s ); 
+            pGroup.push(ptcs);
+            scene.add(ptcs);         
+        }
+        //lines
+        function addShape2(shape, color, x, y, z, rx, ry, rz, s){
+            var points = shape.createPointsGeometry();
+            var line = new THREE.Line( points, new THREE.LineBasicMaterial( { color: color, linewidth: 1.5 } ) );
+            line.position.set( x, y, z);
+            line.rotation.set( rx, ry, rz );
+            line.scale.set( s, s, s );
+            pGroup.push(line); 
+            scene.add(line);
+        }
+        addShape(tstar, 0xFFFF66, 423, 0, -45, 0, 0.1, 0, 0.1);
+        addShape2(tstar, 0xFFCC66, 424, 0, -50, 0, 0.1, 0, 0.2);
+        addShape(tstar, 0xFF9999, 425, 0, -60, 0, 0, 0, 0.2);
+        addShape2(tstar, 0x9999FF, 425, 0, -60, 0, 0, 0, 0.4);
+        addShape(tstar, 0x9966FF, 426, 0, -70, 0, 0, 0, 0.3);
+        addShape2(tstar, 0x0033CC, 426, 0, -70, 0, 0, 0, 0.6);
+        addShape(tstar, 0x0099FF, 428, 0, -80, 0, 0, 0, 0.4);
+        addShape2(tstar, 0x009999, 428, 0, -80, 0, 0, 0, 0.8);
+        addShape(tstar, 0x009900, 433, 0, -90, 0, 0, 0, 0.5);
+        addShape2(tstar, 0x006600, 433, 0, -90, 0, 0, 0, 1);
+
+        window.addEventListener( 'resize', onWindowResize, false );
+    }
+    function animate(){
+        requestAnimationFrame(animate);
+        render();
+        stats.update();
+    }
+    function normalize3dVec(x, y, z){
+        var length = Math.sqrt(x*x + y*y + z*z);
+        return new THREE.Vector3(x/length, y/length, z/length);
+    }
+    function render() {
+        //TWEEN.update();
+        var delta = 5*clock.getDelta();
+        orbitControls.update(delta);
+        sphere.rotation.y += 0.01;
+        sphere2.rotation.y += 0.008;
+        sphere.colorsNeedUpdate = true;
+        sphere2.colorsNeedUpdate = true;
+        star.rotation.y += 0.0125 * delta;
+        star.rotation.x += 0.005 * delta;
+
+        t += 0.007;
+        sphere.position.x = 220*Math.cos(0.4*t) - 120;
+        sphere.position.y = 204.94*Math.sin(0.4*t) + 0;
+
+        sphere2.position.x = 130*Math.cos(t) - 160;
+        sphere2.position.y = 150*Math.sin(t) + 0;
+
+        var time = Date.now() * 0.005;
+
+        //change shape's color
+        for(var shapeNo = 0; shapeNo < 10; shapeNo++){
+            var curColor = pGroup[shapeNo].material.color;
+            var cOffset = 0.7*Math.sin(time*3);
+            curColor.r += cOffset;
+            //curColor.g += cOffset;
+            //curColor.b += cOffset;
+            pGroup[shapeNo].material.color = curColor;
+            pGroup[shapeNo].material.color.needsUpdate = true;
+        }
+
+        //change reflective objects position
+        sphereT.position.x = Math.sin( time * 0.2 ) * 10 + 380;
+        sphereT.position.y = Math.sin( time * 0.22 ) * 10;
+        sphereT.position.z = Math.sin( time * 0.24 ) * 10 - 60;
+        sphereT.rotation.x += 0.02;
+        sphereT.rotation.y += 0.03;
+
+        kleinCT.position.x = Math.sin( time * 0.2 + 2 ) * 10 + 380;
+        kleinCT.position.y = Math.sin( time * 0.22 + 2 ) * 10;
+        kleinCT.position.z = Math.sin( time * 0.24 + 2 ) * 10 - 60;
+        kleinCT.rotation.x += 0.02;
+        kleinCT.rotation.y += 0.03;
+
+        kleinET.position.x = Math.sin( time * 0.2 + 4 ) * 10 + 380;
+        kleinET.position.y = Math.sin( time * 0.22 + 4 ) * 10;
+        kleinET.position.z = Math.sin( time * 0.24 + 4 ) * 10 - 60;
+        kleinET.rotation.x += 0.02;
+        kleinET.rotation.y += 0.03;
+
+        //change refractive objects position
+        for(var objNo = 0; objNo < 6; objNo++){
+            var curObj = rGroup[objNo];
+            curObj.rotation.x += 0.02;
+            curObj.rotation.y += 0.03;
+            // var velocity = new THREE.Vector3();
+            // var absV = 10;
+            // velocity.x = Math.random() * absV - absV/2;
+            // velocity.y = Math.random() * absV - absV/2;
+            // velocity.z = Math.random() * absV - absV/2;            
+            curObj.position.x = Math.sin( time * 0.2 + 6 + 2 * objNo ) * 10 + 365;
+            curObj.position.y = Math.sin( time * 0.22 + 6 + 3* objNo ) * 10;
+            curObj.position.z = Math.sin( time * 0.24 + 6 + 4 * objNo ) * 10 - 90;
+
+            var p1,r1,p2,r2;
+            p1 = new THREE.Vector3(curObj.position.x, curObj.position.y, curObj.position.z);
+            r1 = rSize[objNo];
+            for(var innerObjNo = objNo + 1; innerObjNo < 6; innerObjNo++){
+                var comparedObj = rGroup[innerObjNo];
+                p2 = new THREE.Vector3(comparedObj.position.x, comparedObj.position.y, comparedObj.position.z);
+                r2 = rSize[innerObjNo];
+                if(collisionCheck(p1,r1,p2,r2)){
+                    //console.log("c");
+                    var x = curObj.position.x - comparedObj.position.x, y = curObj.position.y - comparedObj.position.y, z = curObj.position.z - comparedObj.position.z;
+                    var displacement = normalize3dVec(x, y, z);
+                    var bounceDis = 2;
+                    curObj.position.x += bounceDis * displacement.x;
+                    curObj.position.y += bounceDis * displacement.y;
+                    curObj.position.z += bounceDis * displacement.z;
+                }
+            }
+        }
+
+        //plane distortion
+        var earthDistortedNet = [];
+        distortion2(sphere.position, 18, geometry, starDistortedNet,earthDistortedNet);
+        distortion3(sphere2.position,13, geometry, earthDistortedNet);
+        earthDistortedNet = [];
+
+        //particle system
+        var positions = particleGeo.attributes.position.array;
+        var sizes = particleGeo.attributes.size.array;
+        for ( var i = 0, i3 = 0; i < particles; i++, i3 +=3 ) {
+            //size
+            sizes[ i ] = 10 * ( 1 + Math.sin( 0.1 * i + time ) );
+            //position
+            var velocity = new THREE.Vector3();
+            velocity.x = Math.random() * 2 - 1;
+            velocity.y = Math.random() * 2 - 1;
+            velocity.z = Math.random() * 2 - 1;
+
+            positions[i3 + 0] += velocity.x;
+            positions[i3 + 1] += velocity.y;
+            positions[i3 + 2] += velocity.z;
+
+            //put back when out of range
+            var cur_x = positions[i3 + 0];
+            var cur_y = positions[i3 + 1];
+            var cur_z = positions[i3 + 2];
+            if(cur_z > -5){
+                cur_z --;
+            }
+            if(cur_z < -50){
+                cur_z++;
+            }
+            var radius = 8;
+            if(Math.pow(cur_x - (400 - 0.5 * cur_z),2) + cur_y * cur_y >= radius * radius){ 
+                cur_y = radius * Math.random();
+                cur_x = Math.sqrt(radius * radius - cur_y * cur_y) + (400 - 0.5 * cur_z);
+            }
+            positions[i3 + 0] = cur_x;
+            positions[i3 + 1] = cur_y;
+            positions[i3 + 2] = cur_z;
+        }
+        particleGeo.attributes.size.needsUpdate = true;
+        particleGeo.attributes.position.needsUpdate = true;
+        particleSystem.visible = false;
+
+        cubeUniforms.time.value += delta * 2;
+
+        if(animation.v){
+            if(animation.cameraControl >= 460){
+                particleSystem.visible = true;
+            }
+            //deal with re-loop
+            if(animation.cameraControl > 830){
+                animation.cameraControl = (animation.cameraControl - 490) % 340 + 490;
+            }
+            //deal with cubeGroup animation
+            if(animation.cameraControl > 570 && animation.cameraControl < 590){
+                cubeGroupR += 0.8;
+                cubePos = [];
+                for(var i = 0; i < 2 * Math.PI; i += Math.PI/6){
+                    var rTheta = 70/180*Math.PI;
+                    var tempx = cubeGroupR * Math.cos(i + Math.PI/12);
+                    var tempy = cubeGroupR * Math.sin(i + Math.PI/12);
+                    var tempz = 0;
+                    var x = Math.cos(rTheta) * tempx + Math.sin(rTheta) * tempz + 380;
+                    var y = tempy;
+                    var z = -Math.sin(rTheta) * tempx + Math.cos(rTheta) * tempz - 160;
+                    cubePos.push(new THREE.Vector3(x, y, z));
+                }
+                for(var i = 0; i < cubePos.length; i++){
+                    cubeGroup[i].position.set(cubePos[i].x, cubePos[i].y, cubePos[i].z);
+                }
+            }
+            if(animation.cameraControl == 680){
+                cubeGroupR = 2;
+                cubePos = [];
+                for(var i = 0; i < 2 * Math.PI; i += Math.PI/6){
+                    var rTheta = 70/180*Math.PI;
+                    var tempx = cubeGroupR * Math.cos(i + Math.PI/12);
+                    var tempy = cubeGroupR * Math.sin(i + Math.PI/12);
+                    var tempz = 0;
+                    var x = Math.cos(rTheta) * tempx + Math.sin(rTheta) * tempz + 380;
+                    var y = tempy;
+                    var z = -Math.sin(rTheta) * tempx + Math.cos(rTheta) * tempz - 160;
+                    cubePos.push(new THREE.Vector3(x, y, z));
+                }
+                for(var i = 0; i < cubePos.length; i++){
+                    cubeGroup[i].position.set(cubePos[i].x, cubePos[i].y, cubePos[i].z);
+                }
+            }
+            //deal with camera position
+            changeCameraPosition(camera, animation, klein, trackerHelper, LightC);
+            LightC.position.set(camera.position.x, camera.position.y, camera.position.z);
+            animation.cameraControl++;
+        }
+        if(animation.r){
+            changeCameraPosition2(camera, animation);
+            animation.cameraControl++;
+        }
+
+        //sphereT.visible = false; // *cough*
+        cubeCamera.updateCubeMap(renderer, scene);
+        //sphereT.visible = true; // *cough*
+        cubeCamera2.updateCubeMap(renderer, scene);
+
+        renderer.render(scene, camera);
+    }
+
+    //window.onload = init;
+</script>
+</body>
+</html>
